@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.venv/
+.ipynb_checkpoints/
+build/
+*.so
+profiling/*.nsys-rep
+profiling/*.ncu-rep
+profiling/*.sqlite
