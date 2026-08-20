@@ -3,3 +3,5 @@ ninja
 pytest
 numpy
 pandas
+sentence-transformers
+ir-datasets
