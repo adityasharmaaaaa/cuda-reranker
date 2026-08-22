@@ -13,7 +13,7 @@ def test_determinism():
 def test_hand_checked_reranking():
     docs, queries, qrels = load_scifact()
     reranker = Reranker(device="cuda")
-    qid = list(queries.keys())[0]
+    qid = "3"
 
     relevant_doc_ids = list(qrels[qid])
     print("\nKNOWN RELEVANT DOCS:")
