@@ -1,7 +1,10 @@
+import os
 import json
 from benchmarks.harness import cuda_time
 from src.data import load_scifact, build_candidate_pool
 from src.reranker import Reranker
+
+os.makedirs("results", exist_ok=True)
 
 docs, queries, qrels=load_scifact()
 reranker=Reranker(device="cuda")
