@@ -11,19 +11,23 @@ def test_determinism():
     assert [x[0] for x in r1] == [x[0] for x in r2]
 
 def test_hand_checked_reranking():
-    docs,queries,qrels=load_scifact()
-    reranker=Reranker(device="cuda")
-    qid=list(queries.keys())[0]
-    relevant_doc_ids = list(qrels[qid].keys())
+    docs, queries, qrels = load_scifact()
+    reranker = Reranker(device="cuda")
+    qid = list(queries.keys())[0]
+
+    relevant_doc_ids = list(qrels[qid])
     print("\nKNOWN RELEVANT DOCS:")
     for doc_id in relevant_doc_ids:
         print(doc_id, docs[doc_id])
+
     results = run_query(qid, docs, queries, qrels, reranker)
+
     print("\nTOP 3 RERANKED DOCS:")
-    for rank, (doc_id, score) in enumerate(results[:3], start=1):
+    for rank, (doc_id, text, score) in enumerate(results[:3], start=1):
         print(f"{rank}. doc={doc_id}, score={score}")
-        print(docs[doc_id])
-    top_10_doc_ids = [doc_id for doc_id, _ in results[:10]]
+        print(text)
+
+    top_10_doc_ids = [doc_id for doc_id, _, _ in results[:10]]
     assert any(
         doc_id in top_10_doc_ids
         for doc_id in relevant_doc_ids
