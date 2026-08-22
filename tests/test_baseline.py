@@ -22,6 +22,13 @@ def test_hand_checked_reranking():
 
     results = run_query(qid, docs, queries, qrels, reranker)
 
+    print("\nQUERY:", queries[qid])
+
+    all_ranked_ids = [doc_id for doc_id, _, _ in results]
+    for rel_id in relevant_doc_ids:
+        pos = all_ranked_ids.index(rel_id) + 1 if rel_id in all_ranked_ids else None
+        print(f"Relevant doc {rel_id} ranked at position {pos} of {len(all_ranked_ids)}")
+        
     print("\nTOP 3 RERANKED DOCS:")
     for rank, (doc_id, text, score) in enumerate(results[:3], start=1):
         print(f"{rank}. doc={doc_id}, score={score}")
