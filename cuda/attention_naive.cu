@@ -74,6 +74,6 @@ torch::Tensor attention_naive_forward(torch:: Tensor Q, torch::Tensor K, torch::
     return O;
 }
 
-PYBIND11_MODULE(TORCH_EXTENSION_NAME,m){
-    m.def("forward",&attention_naive_forward, "naive attention forward (CUDA)")
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+    m.def("forward", &attention_naive_forward, "naive attention forward (CUDA)");
 }
