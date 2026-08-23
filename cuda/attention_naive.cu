@@ -49,7 +49,7 @@ __global__ void attention_naive_kernel(
         for(int j=0; j<seq; j++){
             values+=scores[j]*v_base[j*head_dim+dim];
         }
-        o_row[d]=values;
+        o_row[dim]=values;
     }
 }
 
