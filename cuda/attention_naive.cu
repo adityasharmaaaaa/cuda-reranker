@@ -21,7 +21,7 @@ __global__ void attention_naive_kernel(
 
     float scale = 1.0f / sqrtf((float)head_dim);
 
-    float scores[seq];
+    float scores[1024];
     for(int j=0; j<seq; j++){
         float dot_product=0.0f;
         for(int d=0; d<head_dim; d++){
