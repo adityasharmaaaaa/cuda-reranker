@@ -14,4 +14,4 @@ def test_attention_tiled_matches_reference():
     ref=F.scaled_dot_product_attention(q,k,v)
     out=attention_tiled.forward(q,k,v)
 
-    torch.testing_assert_close(out,ref,atol=1e-3,rtol=1e-3)
+    torch.testing.assert_close(out,ref,atol=1e-3,rtol=1e-3)

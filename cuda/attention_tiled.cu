@@ -14,7 +14,7 @@ __global__ void attention_tiled_kernel(
 ){
     int batch_head=blockIdx.x;
     int query_idx=threadIdx.x;
-    if(query_idx>=seq) return ;
+    if(query_idx>=seq) return ;  // safe only while blockDim.x == seq exactly — revisit before any block-size tuning
 
     const float* q_row  = Q + (size_t)batch_head * seq * head_dim + query_idx * head_dim;
     const float* k_base = K + (size_t)batch_head * seq * head_dim;
