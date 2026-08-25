@@ -9,47 +9,84 @@ __global__ void attention_naive_kernel(
     const float* __restrict__ V,
     float* __restrict__ O,
     int seq, int head_dim
-){
-    int batch_head=blockIdx.x;
-    int query_idx=threadIdx.x;
-    if(query_idx>=seq) return;
+) {
+    int batch_head = blockIdx.x;
+    int query_idx = threadIdx.x;
 
-    const float* q_row = Q + (size_t)batch_head * seq * head_dim + query_idx * head_dim;
-    const float* k_base = K + (size_t)batch_head * seq * head_dim;
-    const float* v_base = V + (size_t)batch_head * seq * head_dim;
-    float* o_row = O + (size_t)batch_head * seq * head_dim + query_idx * head_dim;
+    if (query_idx >= seq) return;
+
+    const float* q_row =
+        Q + (size_t)batch_head * seq * head_dim
+          + query_idx * head_dim;
+
+    const float* k_base =
+        K + (size_t)batch_head * seq * head_dim;
+
+    const float* v_base =
+        V + (size_t)batch_head * seq * head_dim;
+
+    float* o_row =
+        O + (size_t)batch_head * seq * head_dim
+          + query_idx * head_dim;
 
     float scale = 1.0f / sqrtf((float)head_dim);
 
-    float scores[1024];
-    for(int j=0; j<seq; j++){
-        float dot_product=0.0f;
-        for(int d=0; d<head_dim; d++){
-            dot_product+=q_row[d]*(k_base+j*head_dim)[d];
-        }
-        scores[j]=scale*dot_product;
-    }
-   
-    float maxi=-INFINITY;
-    for(int i=0; i<seq; i++){
-        maxi=fmaxf(maxi,scores[i]);
-    }
-    float sum=0;
-    for(int i=0; i<seq; i++){
-        float x=expf(scores[i]-maxi);
-        sum+=x;
-        scores[i]=x;
-    }
-    for(int i=0; i<seq; i++){
-        scores[i]=scores[i]/sum;
+    // Cache the query vector so it is loaded from global memory only once.
+    // head_dim is 32 in this example, so this is small enough to target registers.
+    float q[32];
+
+    for (int d = 0; d < head_dim; d++) {
+        q[d] = q_row[d];
     }
 
-    for(int dim=0; dim<head_dim; dim++){
-        float values=0.0f;
-        for(int j=0; j<seq; j++){
-            values+=scores[j]*v_base[j*head_dim+dim];
+    // Compute attention scores.
+    float scores[1024];
+
+    for (int j = 0; j < seq; j++) {
+        float dot_product = 0.0f;
+
+        for (int d = 0; d < head_dim; d++) {
+            dot_product += q[d] * k_base[j * head_dim + d];
         }
-        o_row[dim]=values;
+
+        scores[j] = scale * dot_product;
+    }
+
+    // Find maximum score for numerical stability.
+    float maxi = -INFINITY;
+
+    for (int i = 0; i < seq; i++) {
+        maxi = fmaxf(maxi, scores[i]);
+    }
+
+    // Softmax.
+    float sum = 0.0f;
+
+    for (int i = 0; i < seq; i++) {
+        float x = expf(scores[i] - maxi);
+        sum += x;
+        scores[i] = x;
+    }
+
+    for (int i = 0; i < seq; i++) {
+        scores[i] = scores[i] / sum;
+    }
+
+    // Weighted sum.
+    // Accumulate all output dimensions in registers instead of
+    // repeatedly traversing V once per output dimension.
+    float acc[32] = {0};
+
+    for (int j = 0; j < seq; j++) {
+        float s = scores[j];
+
+        for (int dim = 0; dim < head_dim; dim++) {
+            acc[dim] += s * v_base[j * head_dim + dim];
+        }
+    }
+
+    for (int dim = 0; dim < head_dim; dim++) {
+        o_row[dim] = acc[dim];
     }
 }
 
