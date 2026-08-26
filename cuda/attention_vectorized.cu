@@ -70,9 +70,12 @@ __global__ void attention_vectorized_kernel(
         float4* tile_V_vec = reinterpret_cast<float4*>(tile_V);
 
         for (int i = threadIdx.x; i < total_vec_elements; i += blockDim.x) {
-            // Assumes padded sequence lengths for benchmark, otherwise add bound checks
-            tile_K_vec[i] = k_base_vec[i];
-            tile_V_vec[i] = v_base_vec[i];
+            int row_in_tile = i / (HEAD_DIM / 4);
+            int global_row = tile_start + row_in_tile;
+            if (global_row < seq_len) {
+                tile_K_vec[i] = k_base_vec[i];
+                tile_V_vec[i] = v_base_vec[i];
+            }
         }
         __syncthreads();
 
@@ -158,6 +161,7 @@ __global__ void attention_vectorized_kernel(
 }
 
 torch::Tensor forward(torch::Tensor q, torch::Tensor k, torch::Tensor v) {
+    TORCH_CHECK(q.size(3) == HEAD_DIM, "kernel hardcodes head_dim=32, got ", q.size(3));
     int batch_size = q.size(0);
     int num_heads = q.size(1);
     int seq_len = q.size(2);
