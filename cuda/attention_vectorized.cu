@@ -21,6 +21,7 @@ __global__ void attention_vectorized_kernel(
     int head_idx = blockIdx.z;
     int q_idx = blockIdx.x * blockDim.x + threadIdx.x;
 
+    // Load the valid length for this specific batch item
     int valid_len = valid_lengths[batch_idx];
 
     // Calculate base pointers for the specific batch and head
@@ -63,6 +64,16 @@ __global__ void attention_vectorized_kernel(
     for (int tile = 0; tile < num_tiles; tile++) {
         int tile_start = tile * TILE_LEN;
         
+        // Skip tiles that are entirely padding. This is safe — unlike the earlier
+        // `if (query_idx >= seq) return;` landmine — because valid_len depends only
+        // on batch_idx, which is identical for every thread in this block. Every
+        // thread evaluates this condition the same way and either all skip together
+        // or none do. A per-thread-varying condition wrapped around __syncthreads()
+        // would deadlock; a block-uniform one never can.
+        if (tile_start >= valid_len) {
+            continue;
+        }
+
         // 1. Vectorized Cooperative Tile Load
         const float4* k_base_vec = reinterpret_cast<const float4*>(k_base + tile_start * HEAD_DIM);
         const float4* v_base_vec = reinterpret_cast<const float4*>(v_base + tile_start * HEAD_DIM);
@@ -94,7 +105,7 @@ __global__ void attention_vectorized_kernel(
                     score += q_v.x * k_v.x + q_v.y * k_v.y + q_v.z * k_v.z + q_v.w * k_v.w;
                 }
                 
-                // Global mask check
+                // Global mask check (still needed for the boundary tile)
                 int global_k_idx = tile_start + k_idx;
                 if (global_k_idx >= valid_len) {
                     scores[k_idx] = -INFINITY;
@@ -213,7 +224,6 @@ torch::Tensor forward_no_lengths(torch::Tensor q, torch::Tensor k, torch::Tensor
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-    // Pybind11 will evaluate these in registration order. 
     m.def("forward", &forward_with_lengths, "Vectorized Tiled Attention (with mask)");
     m.def("forward", &forward_no_lengths, "Vectorized Tiled Attention (no mask)");
 }
