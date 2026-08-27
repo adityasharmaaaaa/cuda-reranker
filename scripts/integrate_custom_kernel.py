@@ -2,6 +2,7 @@ import torch
 from torch.utils.cpp_extension import load
 from src.reranker import Reranker
 from src.data import load_scifact, build_candidate_pool
+from transformers.models.bert import modeling_bert
 
 # 1. inspect the registry before assuming its API
 from transformers.models.bert import modeling_bert
@@ -28,6 +29,8 @@ def custom_attention_forward(module, query, key, value, attention_mask, dropout=
 #    the printed methods above tell us the real one to use
 from transformers import AttentionInterface
 AttentionInterface.register("custom_cuda", custom_attention_forward)
+sdpa_mask_fn = modeling_bert.ALL_MASK_ATTENTION_FUNCTIONS["sdpa"]
+modeling_bert.ALL_MASK_ATTENTION_FUNCTIONS.register("custom_cuda", sdpa_mask_fn)
 
 # 4. one baseline model, one pointed at the custom kernel
 docs, queries, qrels = load_scifact()
