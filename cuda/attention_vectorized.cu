@@ -3,7 +3,6 @@
 #include <cuda_runtime.h>
 #include <math.h>
 
-// Assumes head_dim = 32 per your prompt. Adjust TILE_LEN if your grid uses 64.
 #define TILE_LEN 32 
 #define HEAD_DIM 32 
 
@@ -12,6 +11,7 @@ __global__ void attention_vectorized_kernel(
     const float* __restrict__ k,
     const float* __restrict__ v,
     float* __restrict__ out,
+    const int* __restrict__ valid_lengths,  
     int batch_size,
     int num_heads,
     int seq_len,
@@ -20,6 +20,8 @@ __global__ void attention_vectorized_kernel(
     int batch_idx = blockIdx.y;
     int head_idx = blockIdx.z;
     int q_idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    int valid_len = valid_lengths[batch_idx];
 
     // Calculate base pointers for the specific batch and head
     int head_offset = (batch_idx * num_heads + head_idx) * seq_len * HEAD_DIM;
@@ -55,15 +57,13 @@ __global__ void attention_vectorized_kernel(
     int num_tiles = (seq_len + TILE_LEN - 1) / TILE_LEN;
     int total_elements = TILE_LEN * HEAD_DIM;
     
-    // NEW: Number of float4 vectors to load cooperatively
+    // Number of float4 vectors to load cooperatively
     int total_vec_elements = total_elements / 4;
 
     for (int tile = 0; tile < num_tiles; tile++) {
         int tile_start = tile * TILE_LEN;
         
-        // -----------------------------------------------------------
         // 1. Vectorized Cooperative Tile Load
-        // -----------------------------------------------------------
         const float4* k_base_vec = reinterpret_cast<const float4*>(k_base + tile_start * HEAD_DIM);
         const float4* v_base_vec = reinterpret_cast<const float4*>(v_base + tile_start * HEAD_DIM);
         float4* tile_K_vec = reinterpret_cast<float4*>(tile_K);
@@ -83,9 +83,7 @@ __global__ void attention_vectorized_kernel(
             int keys_in_tile = min(TILE_LEN, seq_len - tile_start);
             float scores[TILE_LEN];
 
-            // -----------------------------------------------------------
             // 2. Vectorized Inner Loop 1: Q * K^T
-            // -----------------------------------------------------------
             for (int k_idx = 0; k_idx < keys_in_tile; k_idx++) {
                 float4* k_local_vec = reinterpret_cast<float4*>(&tile_K[k_idx * HEAD_DIM]);
                 float score = 0.0f;
@@ -95,16 +93,23 @@ __global__ void attention_vectorized_kernel(
                     float4 k_v = k_local_vec[d];
                     score += q_v.x * k_v.x + q_v.y * k_v.y + q_v.z * k_v.z + q_v.w * k_v.w;
                 }
-                scores[k_idx] = score * scale;
+                
+                int global_k_idx = tile_start + k_idx;
+                if (global_k_idx >= valid_len) {
+                    scores[k_idx] = -INFINITY;
+                } else {
+                    scores[k_idx] = score * scale;
+                }
             }
 
-            // Online softmax calculations
             float old_max = max_logit;
             for (int k_idx = 0; k_idx < keys_in_tile; k_idx++) {
                 max_logit = fmaxf(max_logit, scores[k_idx]);
             }
 
-            float exp_correction = expf(old_max - max_logit);
+            // GUARD: Prevent expf(-INF - (-INF)) which yields NaN.
+            // If max_logit is still -INF, there have been no valid keys yet.
+            float exp_correction = (max_logit == -INFINITY) ? 0.0f : expf(old_max - max_logit);
             sum_exp *= exp_correction;
             
             // Apply scale to existing accumulator
@@ -116,11 +121,10 @@ __global__ void attention_vectorized_kernel(
                 acc_vec[d].w *= exp_correction;
             }
 
-            // -----------------------------------------------------------
             // 3. Vectorized Inner Loop 2: Softmax * V
-            // -----------------------------------------------------------
             for (int k_idx = 0; k_idx < keys_in_tile; k_idx++) {
-                float exp_score = expf(scores[k_idx] - max_logit);
+                // GUARD: Prevent NaN when scores[k_idx] and max_logit are both -INF
+                float exp_score = (max_logit == -INFINITY) ? 0.0f : expf(scores[k_idx] - max_logit);
                 sum_exp += exp_score;
 
                 float4* v_local_vec = reinterpret_cast<float4*>(&tile_V[k_idx * HEAD_DIM]);
@@ -138,7 +142,10 @@ __global__ void attention_vectorized_kernel(
     }
 
     if (q_idx < seq_len) {
-        float inv_sum = 1.0f / sum_exp;
+        // GUARD: If a query sequence is completely masked, sum_exp will be 0.0f.
+        // Prevent div-by-zero turning 0.0f acc into NaN.
+        float inv_sum = (sum_exp > 0.0f) ? (1.0f / sum_exp) : 0.0f;
+        
         #pragma unroll
         for (int d = 0; d < HEAD_DIM / 4; d++) {
             acc_vec[d].x *= inv_sum;
@@ -147,9 +154,7 @@ __global__ void attention_vectorized_kernel(
             acc_vec[d].w *= inv_sum;
         }
 
-        // -----------------------------------------------------------
-        // 4. NEW: Vectorized Global Memory Write
-        // -----------------------------------------------------------
+        // 4. Vectorized Global Memory Write
         float* o_row = out_base + q_idx * HEAD_DIM;
         float4* o_row_vec = reinterpret_cast<float4*>(o_row);
         
@@ -160,8 +165,15 @@ __global__ void attention_vectorized_kernel(
     }
 }
 
-torch::Tensor forward(torch::Tensor q, torch::Tensor k, torch::Tensor v) {
+torch::Tensor forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor valid_lengths) {
     TORCH_CHECK(q.size(3) == HEAD_DIM, "kernel hardcodes head_dim=32, got ", q.size(3));
+    
+    // Validate valid_lengths tensor
+    TORCH_CHECK(valid_lengths.dim() == 1, "valid_lengths must be a 1D tensor");
+    TORCH_CHECK(valid_lengths.size(0) == q.size(0), "valid_lengths must match batch_size");
+    TORCH_CHECK(valid_lengths.scalar_type() == torch::kInt32, "valid_lengths must be int32");
+    TORCH_CHECK(valid_lengths.is_cuda(), "valid_lengths must be on CUDA");
+
     int batch_size = q.size(0);
     int num_heads = q.size(1);
     int seq_len = q.size(2);
@@ -181,6 +193,7 @@ torch::Tensor forward(torch::Tensor q, torch::Tensor k, torch::Tensor v) {
         k.data_ptr<float>(),
         v.data_ptr<float>(),
         out.data_ptr<float>(),
+        valid_lengths.data_ptr<int>(), // Pass through memory pointer
         batch_size,
         num_heads,
         seq_len,
