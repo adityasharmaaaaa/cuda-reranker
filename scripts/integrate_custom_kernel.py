@@ -5,7 +5,6 @@ from src.data import load_scifact, build_candidate_pool
 from transformers.models.bert import modeling_bert
 
 # 1. inspect the registry before assuming its API
-from transformers.models.bert import modeling_bert
 registry = modeling_bert.ALL_ATTENTION_FUNCTIONS
 print("registry type:", type(registry))
 print("public methods:", [m for m in dir(registry) if not m.startswith("_")])
@@ -25,12 +24,24 @@ def custom_attention_forward(module, query, key, value, attention_mask, dropout=
     attn_output = attn_output.transpose(1, 2).contiguous()  # match sdpa_attention_forward's output layout
     return attn_output, None
 
-# 3. register — best guess based on the dispatch pattern; if this line errors,
-#    the printed methods above tell us the real one to use
+# 3. register — dynamic lookup to avoid version-specific import errors
 from transformers import AttentionInterface
 AttentionInterface.register("custom_cuda", custom_attention_forward)
-sdpa_mask_fn = modeling_bert.ALL_MASK_ATTENTION_FUNCTIONS["sdpa"]
-modeling_bert.ALL_MASK_ATTENTION_FUNCTIONS.register("custom_cuda", sdpa_mask_fn)
+
+import importlib
+mask_module_path = modeling_bert.create_bidirectional_mask.__module__
+print("create_bidirectional_mask defined in:", mask_module_path)
+mask_module = importlib.import_module(mask_module_path)
+
+mask_registry = mask_module.ALL_MASK_ATTENTION_FUNCTIONS
+print("mask registry type:", type(mask_registry))
+print("mask registry public methods:", [m for m in dir(mask_registry) if not m.startswith("_")])
+print("keys before:", list(mask_registry.keys()) if hasattr(mask_registry, "keys") else "no .keys()")
+
+sdpa_mask_fn = mask_registry["sdpa"]
+mask_registry.register("custom_cuda", sdpa_mask_fn)
+
+print("keys after:", list(mask_registry.keys()) if hasattr(mask_registry, "keys") else "no .keys()")
 
 # 4. one baseline model, one pointed at the custom kernel
 docs, queries, qrels = load_scifact()
