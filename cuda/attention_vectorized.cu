@@ -94,6 +94,7 @@ __global__ void attention_vectorized_kernel(
                     score += q_v.x * k_v.x + q_v.y * k_v.y + q_v.z * k_v.z + q_v.w * k_v.w;
                 }
                 
+                // Global mask check
                 int global_k_idx = tile_start + k_idx;
                 if (global_k_idx >= valid_len) {
                     scores[k_idx] = -INFINITY;
@@ -102,6 +103,7 @@ __global__ void attention_vectorized_kernel(
                 }
             }
 
+            // Online softmax calculations
             float old_max = max_logit;
             for (int k_idx = 0; k_idx < keys_in_tile; k_idx++) {
                 max_logit = fmaxf(max_logit, scores[k_idx]);
@@ -165,10 +167,10 @@ __global__ void attention_vectorized_kernel(
     }
 }
 
-torch::Tensor forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor valid_lengths) {
+// Target function 1: Full 4-argument signature
+torch::Tensor forward_with_lengths(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor valid_lengths) {
     TORCH_CHECK(q.size(3) == HEAD_DIM, "kernel hardcodes head_dim=32, got ", q.size(3));
     
-    // Validate valid_lengths tensor
     TORCH_CHECK(valid_lengths.dim() == 1, "valid_lengths must be a 1D tensor");
     TORCH_CHECK(valid_lengths.size(0) == q.size(0), "valid_lengths must match batch_size");
     TORCH_CHECK(valid_lengths.scalar_type() == torch::kInt32, "valid_lengths must be int32");
@@ -177,14 +179,12 @@ torch::Tensor forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::
     int batch_size = q.size(0);
     int num_heads = q.size(1);
     int seq_len = q.size(2);
-    // head_dim inferred as HEAD_DIM (32) internally
 
     auto out = torch::empty_like(q);
 
     dim3 threads_per_block(TILE_LEN);
     dim3 blocks_per_grid((seq_len + TILE_LEN - 1) / TILE_LEN, batch_size, num_heads);
 
-    // K & V tiles: 2 * TILE_LEN * HEAD_DIM elements
     size_t smem_size = 2 * TILE_LEN * HEAD_DIM * sizeof(float);
     float scale = 1.0f / sqrtf((float)HEAD_DIM);
 
@@ -193,7 +193,7 @@ torch::Tensor forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::
         k.data_ptr<float>(),
         v.data_ptr<float>(),
         out.data_ptr<float>(),
-        valid_lengths.data_ptr<int>(), // Pass through memory pointer
+        valid_lengths.data_ptr<int>(),
         batch_size,
         num_heads,
         seq_len,
@@ -203,6 +203,17 @@ torch::Tensor forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::
     return out;
 }
 
+// Target function 2: 3-argument fallback for older tests/code
+torch::Tensor forward_no_lengths(torch::Tensor q, torch::Tensor k, torch::Tensor v) {
+    int batch_size = q.size(0);
+    int seq_len = q.size(2);
+    // Auto-generate a mask where every batch item is valid all the way to seq_len
+    auto valid_lengths = torch::full({batch_size}, seq_len, torch::TensorOptions().dtype(torch::kInt32).device(q.device()));
+    return forward_with_lengths(q, k, v, valid_lengths);
+}
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-    m.def("forward", &forward, "Vectorized Tiled Attention");
+    // Pybind11 will evaluate these in registration order. 
+    m.def("forward", &forward_with_lengths, "Vectorized Tiled Attention (with mask)");
+    m.def("forward", &forward_no_lengths, "Vectorized Tiled Attention (no mask)");
 }
