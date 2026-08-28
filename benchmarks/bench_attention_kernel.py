@@ -34,10 +34,11 @@ torch.manual_seed(0)
 q = torch.randn(batch, num_heads, seq_len, head_dim, device="cuda")
 k = torch.randn(batch, num_heads, seq_len, head_dim, device="cuda")
 v = torch.randn(batch, num_heads, seq_len, head_dim, device="cuda")
+full_valid_lengths = torch.full((batch,), seq_len, dtype=torch.int32, device="cuda")
 
 def run_naive(): attention_naive.forward(q, k, v)
 def run_tiled(): attention_tiled.forward(q, k, v)
-def run_vectorized(): attention_vectorized.forward(q,k,v)
+def run_vectorized(): attention_vectorized.forward(q, k, v, full_valid_lengths)
 def run_sdpa():  F.scaled_dot_product_attention(q, k, v)
 
 naive_stats = cuda_time(run_naive, warmup=10, reps=30)
