@@ -5,7 +5,8 @@ from src.data import load_scifact, build_candidate_pool
 from src.reranker import Reranker
 from src.pipeline import run_query
 from src.custom_attention import register_custom_attention
-
+import json, os
+os.makedirs("results", exist_ok=True)
 register_custom_attention()
 
 docs, queries, qrels = load_scifact()
@@ -38,9 +39,13 @@ for qid in qids:
     else:
         overlap = len(set(base_top10) & set(cust_top10))
         print(f"{qid}: top-10 order differs (overlap {overlap}/10)")
-
-print(f"\nqueries evaluated: {len(qids)}")
-print(f"exact top-10 match: {exact_top10_matches}/{len(qids)}")
-print(f"baseline median latency: {statistics.median(baseline_times):.1f} ms")
-print(f"custom median latency: {statistics.median(custom_times):.1f} ms")
-print(f"speedup: {statistics.median(baseline_times)/statistics.median(custom_times):.2f}x")
+result = {
+    "queries_evaluated": len(qids),
+    "exact_top10_matches": exact_top10_matches,
+    "baseline_median_ms": statistics.median(baseline_times),
+    "custom_median_ms": statistics.median(custom_times),
+    "speedup": statistics.median(baseline_times) / statistics.median(custom_times),
+}
+print(result)
+with open("results/stage7_full_pipeline.json", "w") as f:
+    json.dump(result, f, indent=2)
