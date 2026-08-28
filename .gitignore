@@ -7,3 +7,4 @@ build/
 profiling/*.nsys-rep
 profiling/*.ncu-rep
 profiling/*.sqlite
+.DS_Store

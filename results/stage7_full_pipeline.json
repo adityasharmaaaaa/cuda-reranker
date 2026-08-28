@@ -1,0 +1,7 @@
+{
+  "queries_evaluated": 20,
+  "exact_top10_matches": 20,
+  "baseline_median_ms": 255.04475899970203,
+  "custom_median_ms": 244.7631985000953,
+  "speedup": 1.0420061535500922
+}

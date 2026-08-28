@@ -1,0 +1,28 @@
+{
+  "vectorized_masked": {
+    "median_ms": 8.10313606262207,
+    "min_ms": 8.019968032836914,
+    "max_ms": 15.21343994140625
+  },
+  "sdpa_masked": {
+    "median_ms": 10.795743942260742,
+    "min_ms": 10.512096405029297,
+    "max_ms": 10.96332836151123
+  },
+  "sdpa_unmasked": {
+    "median_ms": 10.166751861572266,
+    "min_ms": 9.880767822265625,
+    "max_ms": 10.233856201171875
+  },
+  "valid_lengths": {
+    "min": 123,
+    "max": 512,
+    "mean": 349.0
+  },
+  "shape": {
+    "batch": 50,
+    "heads": 12,
+    "seq": 512,
+    "head_dim": 32
+  }
+}
