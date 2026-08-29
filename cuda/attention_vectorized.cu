@@ -120,7 +120,6 @@ __global__ void attention_vectorized_kernel(
                 max_logit = fmaxf(max_logit, scores[k_idx]);
             }
 
-            // GUARD: Prevent expf(-INF - (-INF)) which yields NaN.
             // If max_logit is still -INF, there have been no valid keys yet.
             float exp_correction = (max_logit == -INFINITY) ? 0.0f : expf(old_max - max_logit);
             sum_exp *= exp_correction;
@@ -136,7 +135,6 @@ __global__ void attention_vectorized_kernel(
 
             // 3. Vectorized Inner Loop 2: Softmax * V
             for (int k_idx = 0; k_idx < keys_in_tile; k_idx++) {
-                // GUARD: Prevent NaN when scores[k_idx] and max_logit are both -INF
                 float exp_score = (max_logit == -INFINITY) ? 0.0f : expf(scores[k_idx] - max_logit);
                 sum_exp += exp_score;
 
@@ -155,7 +153,6 @@ __global__ void attention_vectorized_kernel(
     }
 
     if (q_idx < seq_len) {
-        // GUARD: If a query sequence is completely masked, sum_exp will be 0.0f.
         // Prevent div-by-zero turning 0.0f acc into NaN.
         float inv_sum = (sum_exp > 0.0f) ? (1.0f / sum_exp) : 0.0f;
         
@@ -178,7 +175,6 @@ __global__ void attention_vectorized_kernel(
     }
 }
 
-// Target function 1: Full 4-argument signature
 torch::Tensor forward_with_lengths(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor valid_lengths) {
     TORCH_CHECK(q.size(3) == HEAD_DIM, "kernel hardcodes head_dim=32, got ", q.size(3));
     
